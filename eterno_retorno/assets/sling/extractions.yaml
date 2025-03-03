@@ -1,0 +1,487 @@
+source: MSSQL_INFOREST
+target: BIGQUERY_INFOREST
+
+defaults:
+  mode: full-refresh
+  object: "{stream_schema}_{stream_table}"
+  target_options:
+    auto_create: true
+    auto_schema: true
+    create_if_not_exists: true
+    pre_create: true
+    schema_mode: merge
+
+streams:
+  "cobranzas":
+    mode: snapshot
+    object: "cobranzas"
+    sql: |
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          c.tIdentidad AS CodCliente,
+          c.tEmpresa AS Cliente,
+          md.fRegistro AS FechaFacturacion,
+          p.tDocumento AS Documento,
+          md.nVenta AS MontoFacturado,
+          p.fRegistro AS FechaCobranza,
+          tp01.tCodigo AS CodTipoPago,
+          tp01.tDetallado AS TipoPago,
+          tp02.tCodigo AS CodOtroTipoPago,
+          tp02.tDetallado AS OtroTipoPago,
+          t.tCodigoTarjeta AS CodTarjeta,
+          t.tDetallado AS Tarjeta,
+          p.tNumero AS NroTarjeta,
+          p.nTipoCambio AS TipoCambio,
+          ROUND(p.nMonto, 2) AS ImporteCobradoMonedaOriginal,
+          CASE 
+              WHEN p.tMoneda = '01' THEN 'Soles' 
+              ELSE 'Dolares' 
+          END AS Moneda,
+          ROUND(CASE 
+              WHEN p.tMoneda = '01' THEN 1 
+              ELSE p.nTipoCambio 
+          END * p.nMonto, 2) AS ImporteCobradoSoles,
+          ROUND(CASE 
+              WHEN p.tMoneda = '01' THEN 1 
+              ELSE p.nTipoCambio 
+          END * ISNULL(p.nPropina, 0), 2) AS ImportePropina
+      FROM 
+          {DATABASE_INFOREST}..DPAGODOCUMENTO p
+      INNER JOIN 
+          {DATABASE_INFOREST}..MDOCUMENTO md ON p.tDocumento = md.tDocumento
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..TCLIENTE c ON md.tCodigoCliente = c.tCodigoCliente  
+      INNER JOIN 
+          {DATABASE_INFOREST}..TTABLA tp01 ON p.tTipoPago = tp01.tCodigo AND tp01.tTabla = 'tipopago'
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..TTABLA tp02 ON p.tOtroTipoPago = tp02.tCodigo AND tp02.tTabla = 'TIPOCANCELACION'
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..TTARJETACREDITO t ON p.tTarjeta = t.tCodigoTarjeta
+      WHERE 
+          CONVERT(DATE, p.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) AND CONVERT(DATE, p.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+    target_options:
+      init_sql: |
+        CREATE TABLE IF NOT EXISTS eternoretorno.Eterno_Retorno.cobranzas AS 
+        SELECT * FROM `Eterno_Retorno`.`cobranzas_tmp` LIMIT 0;
+      pre_sql: |
+        DELETE FROM eternoretorno.Eterno_Retorno.cobranzas WHERE CodSucursal = "{DATABASE_INFOREST}";
+
+  "detalledocumentos":
+    mode: snapshot
+    object: "detalledocumentos"
+    sql: |
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          cl.tCodigoCliente AS CodCliente,
+          cl.tIdentidad AS IdTributario,
+          cl.tEmpresa AS RazonSocial,
+          cp.Descripcion AS ClienteCtaCobrar,
+          CONVERT(DATE, d.fRegistro) AS FEmision,
+          d.tDocumento AS Documento,
+          CONVERT(DATE, d.fRegistroAnulado) AS FAnulacion,
+          ed.tDetallado AS Estado,
+          dd.tCodigoPedido AS Pedido,
+          p.tGrupo AS CodGrupo,
+          g.tDetallado AS Grupo,
+          p.tSubGrupo AS CodSubGrupo,
+          sg.tDetallado AS SubGrupo,
+          g1.CodArea,
+          g1.Area,
+          dd.tCodigoProducto AS CodProducto,
+          p.tDetallado AS Producto,
+          dd.nCantidad AS Cantidad,
+          dd.nPrecioVenta AS PrecioUnitario,
+          dd.nVenta AS Venta
+      FROM 
+          {DATABASE_INFOREST}..mDocumento d
+      INNER JOIN 
+          {DATABASE_INFOREST}..tTabla ed ON d.tEstadoDocumento = ed.tCodigo
+      INNER JOIN 
+          {DATABASE_INFOREST}..dDocumento dd ON d.tDocumento = dd.tDocumento
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..TCLIENTE cl ON d.tCodigoCliente = cl.tCodigoCliente    
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}.dbo.vCompania cp ON d.tClientePago = cp.Codigo
+      INNER JOIN 
+          {DATABASE_INFOREST}..tProducto p ON dd.tCodigoProducto = p.tCodigoProducto
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..tGrupo g ON p.tGrupo = g.tCodigoGrupo 
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..tSubGrupo sg ON p.tSubGrupo = sg.tCodigoSubgrupo 
+      INNER JOIN 
+          (SELECT TCodigo AS CodArea, tDetallado AS Area
+          FROM {DATABASE_INFOREST}..ttabla 
+          WHERE tTabla = 'area') g1 ON p.tArea = g1.CodArea       
+      WHERE 
+          ed.tTabla = 'EstadoDocumento' 
+          AND CONVERT(DATE, d.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+          AND CONVERT(DATE, d.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+
+      UNION ALL
+
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          c.tCodigoDelivery,
+          c.tIdentidad AS IdTributario,
+          c.tnombre AS RazonSocial,
+          '' AS ClienteCtaCobrar,
+          CONVERT(DATE, p.fRegistro) AS FEmision,
+          NULL AS Documento,
+          NULL AS FAnulacion,
+          'CTA. CTE.' AS Estado,
+          dp.tCodigoPedido AS Pedido,
+          pdto.tGrupo AS CodGrupo,
+          g.tDetallado AS Grupo,
+          pdto.tSubGrupo AS CodSubGrupo,
+          sg.tDetallado AS SubGrupo,
+          g1.CodArea,
+          g1.Area,
+          dp.tCodigoProducto AS CodProducto,
+          pdto.tDetallado AS Producto,
+          dp.nCantidad AS Cantidad,
+          dp.nPrecioVenta AS PrecioUnitario,
+          dp.nVenta AS Venta
+      FROM 
+          {DATABASE_INFOREST}..mPedido p
+      INNER JOIN 
+          {DATABASE_INFOREST}..tDelivery c ON p.tClienteCtaCte = c.tCodigoDelivery
+      INNER JOIN 
+          {DATABASE_INFOREST}..dPedido dp ON p.tCodigoPedido = dp.tCodigoPedido 
+      INNER JOIN 
+          {DATABASE_INFOREST}..tProducto pdto ON dp.tCodigoProducto = pdto.tCodigoProducto
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..tGrupo g ON pdto.tGrupo = g.tCodigoGrupo 
+      LEFT OUTER JOIN 
+          {DATABASE_INFOREST}..tSubGrupo sg ON pdto.tSubGrupo = sg.tCodigoSubgrupo 
+      INNER JOIN 
+          (SELECT TCodigo AS CodArea, tDetallado AS Area
+          FROM {DATABASE_INFOREST}..ttabla 
+          WHERE tTabla = 'area') g1 ON pdto.tArea = g1.CodArea 
+      WHERE 
+          p.tEstadoPedido = '04' 
+          AND CONVERT(DATE, p.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+          AND CONVERT(DATE, p.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+    target_options:
+      init_sql: |
+        CREATE TABLE IF NOT EXISTS eternoretorno.Eterno_Retorno.detalledocumentos AS 
+        SELECT * FROM `Eterno_Retorno`.`detalledocumentos_tmp` LIMIT 0;
+      pre_sql: |
+        DELETE FROM eternoretorno.Eterno_Retorno.detalledocumentos WHERE CodSucursal = "{DATABASE_INFOREST}";
+
+  "documentosemitidos":
+    mode: snapshot
+    object: "documentosemitidos"
+    sql: |
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          CASE 
+              WHEN CONVERT(TIME, d.fRegistro) >= '00:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '04:59:59.0000000' THEN DATEADD(DAY, -1, CONVERT(DATE, d.fRegistro))
+              WHEN CONVERT(TIME, d.fRegistro) >= '05:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '23:59:59.0000000' THEN CONVERT(DATE, d.fRegistro)
+          END AS FechaOperacion,
+          CASE 
+              WHEN CONVERT(TIME, d.fRegistro) >= '05:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '18:00:00.0000000' THEN 'AM'
+              WHEN CONVERT(TIME, d.fRegistro) >= '18:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '23:59:59.0000000' THEN 'PM'
+              WHEN CONVERT(TIME, d.fRegistro) >= '00:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '05:00:00.0000000' THEN 'PM'
+          END AS Turno,
+          CONVERT(DATE, d.fRegistro) AS FechaEmision,
+          t1.tValor AS CodTipoIdentidad,
+          t1.tResumido AS TipoIdentidad,
+          d.tCodigoCliente AS IdCliente,
+          c.tIdentidad AS CodCliente,
+          c.tEmpresa AS Cliente,
+          cxp.tCodigoDelivery AS CXCCodigo,
+          cxp.tNombre + ' ' + cxp.tApellido AS CXCDescripcion,
+          td.Codigo AS CodTipoDocumento,
+          td.Sunat AS CodSUNAT,
+          td.Descripcion AS TipoDocumento,
+          d.tDocumento AS Documento,
+          d.nNeto AS Neto,
+          d.nPrecioImpuesto1 AS IGV,
+          d.nPrecioImpuesto2 AS Recargo,
+          d.nVenta AS Bruto,
+          NULL AS Referencia,
+          NULL AS FechaReferencia,
+          d.tUsuario AS Cajero,
+          t2.tCodigo AS CodEstado,
+          t2.tDetallado AS Estado 
+      FROM {DATABASE_INFOREST}..mDocumento d
+      LEFT JOIN {DATABASE_INFOREST}..tCliente c ON d.tCodigoCliente = c.tCodigoCliente
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t1 ON t1.tCodigo = c.tTipoIdentidad AND t1.tTabla = 'TipoIdentidad'
+      LEFT JOIN {DATABASE_INFOREST}..vTipoDocumento td ON d.tTipoDocumento = td.Codigo
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t2 ON d.tEstadoDocumento = t2.tCodigo AND t2.tTabla LIKE 'EstadoDocumento'
+      LEFT JOIN {DATABASE_INFOREST}..tDelivery cxp ON d.tClientePago = cxp.tCodigoDelivery
+      WHERE CONVERT(DATE, d.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+        AND CONVERT(DATE, d.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+
+      UNION ALL
+
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          CASE 
+              WHEN CONVERT(TIME, nc.fFecha) >= '00:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '04:59:59.0000000' THEN DATEADD(DAY, -1, CONVERT(DATE, nc.fFecha))
+              WHEN CONVERT(TIME, nc.fFecha) >= '05:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '23:59:59.0000000' THEN CONVERT(DATE, nc.fFecha)
+          END AS FechaOperacion,
+          CASE 
+              WHEN CONVERT(TIME, nc.fFecha) >= '05:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '18:00:00.0000000' THEN 'AM'
+              WHEN CONVERT(TIME, nc.fFecha) >= '18:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '23:59:59.0000000' THEN 'PM'
+              WHEN CONVERT(TIME, nc.fFecha) >= '00:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '05:00:00.0000000' THEN 'PM'
+          END AS Turno,
+          CONVERT(DATE, nc.fRegistro) AS FechaEmision,
+          t1.tValor AS CodTipoIdentidad,
+          t1.tResumido AS TipoIdentidad,
+          d.tCodigoCliente AS IdCliente,
+          c.tIdentidad AS CodCliente,
+          c.tEmpresa AS Cliente,
+          '' AS CXCCodigo,
+          '' AS CXCDescripcion,
+          td.Codigo AS CodTipoDocumento,
+          td.Sunat AS CodSUNAT,
+          td.Descripcion AS TipoDocumento,
+          nc.tNotaCredito AS Documento,
+          nc.nNeto AS Neto,
+          nc.nImpuesto1 AS IGV,
+          nc.nImpuesto2 AS Recargo,
+          nc.nVenta AS Bruto,
+          nc.tDocumento AS Referencia,
+          CONVERT(DATE, d.fRegistro) AS FechaReferencia,
+          nc.tUsuario AS Cajero,
+          nc.tEstadoDocumento AS CodEstado,
+          t2.tResumido AS Estado
+      FROM {DATABASE_INFOREST}..mNotaCredito nc
+      INNER JOIN {DATABASE_INFOREST}..mDocumento d ON nc.tDocumento = d.tDocumento
+      LEFT JOIN {DATABASE_INFOREST}..tCliente c ON d.tCodigoCliente = c.tCodigoCliente
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t1 ON t1.tCodigo = c.tTipoIdentidad AND t1.tTabla = 'TipoIdentidad'
+      INNER JOIN {DATABASE_INFOREST}..vTipoDocumento td ON nc.tTipoDocumento = td.Codigo
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t2 ON nc.tEstadoDocumento = t2.tCodigo AND t2.tTabla LIKE 'EstadoDocumento'
+      WHERE CONVERT(DATE, nc.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+        AND CONVERT(DATE, nc.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+    target_options:
+      init_sql: |
+        CREATE TABLE IF NOT EXISTS eternoretorno.Eterno_Retorno.documentosemitidos AS 
+        SELECT * FROM `Eterno_Retorno`.`documentosemitidos_tmp` LIMIT 0;
+      pre_sql: |
+        DELETE FROM eternoretorno.Eterno_Retorno.documentosemitidos WHERE CodSucursal = "{DATABASE_INFOREST}";
+
+  "liquidacionespedidos":
+    mode: snapshot
+    object: "liquidacionespedidos"
+    sql: |
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          cv.tCodigoCanalVenta AS CodCanalVenta,
+          cv.tDetallado AS CanalVenta,
+          CASE 
+              WHEN CONVERT(TIME, p.fRegistro) >= '00:00:00.0000000' AND CONVERT(TIME, p.fRegistro) < '04:59:59.0000000' THEN DATEADD(DAY, -1, CONVERT(DATE, p.fRegistro))
+              WHEN CONVERT(TIME, p.fRegistro) >= '05:00:00.0000000' AND CONVERT(TIME, p.fRegistro) < '23:59:59.0000000' THEN CONVERT(DATE, p.fRegistro)
+          END AS FechaOperacion,
+          CASE 
+              WHEN CONVERT(TIME, p.fRegistro) >= '05:00:00.0000000' AND CONVERT(TIME, p.fRegistro) < '18:00:00.0000000' THEN 'AM'
+              WHEN CONVERT(TIME, p.fRegistro) >= '18:00:00.0000000' AND CONVERT(TIME, p.fRegistro) < '23:59:59.0000000' THEN 'PM' 
+              WHEN CONVERT(TIME, p.fRegistro) >= '00:00:00.0000000' AND CONVERT(TIME, p.fRegistro) < '05:00:00.0000000' THEN 'PM'
+          END AS Turno,
+          CONVERT(DATE, ISNULL(d.fRegistro, p.fRegistro)) AS FechaDocumento,
+          CONVERT(TIME, ISNULL(d.fRegistro, p.fRegistro)) AS HoraDocumento,
+          ISNULL(td.tCodigoTipoDocumento, '99') AS CodTipoDocumento,
+          ISNULL(td.tDescripcion, 'PEDIDO') AS TipoDocumento,
+          ISNULL(td.tCodigoSunat, '99') AS CodSUNAT,
+          g1.Documento,
+          d.tUsuario AS Cajero,
+          CONVERT(DATE, p.fRegistro) AS FechaPedido,
+          CONVERT(TIME, p.fRegistro) AS HoraPedido,
+          p.tCodigoPedido AS Pedido,
+          p.nAdulto AS PAX,
+          ISNULL(m.tDetallado, p.tUsuario) AS Mozo,
+          ISNULL(s.Descripcion + ' - ' + ms.tDetallado, '') AS Mesa,
+          CASE 
+              WHEN p.tEstadoPedido = '02' THEN c1.tCodigoCliente 
+              WHEN p.tEstadoPedido = '04' THEN c2.tCodigoDelivery 
+          END AS IdCliente,
+          CASE 
+              WHEN p.tEstadoPedido = '02' THEN c1.tIdentidad  
+              WHEN p.tEstadoPedido = '04' THEN c2.tIdentidad 
+          END AS CodCliente,
+          CASE 
+              WHEN p.tEstadoPedido = '02' THEN c1.tEmpresa   
+              WHEN p.tEstadoPedido = '04' THEN c2.tNombre + ' ' + c2.tApellido 
+          END AS Cliente,
+          dsto.tDescuento AS CodDescuento,
+          dsto.tDetallado AS Descuento,
+          NULL AS Column1,
+          NULL AS Column2,
+          NULL AS Column3,
+          g1.Total,
+          NULL AS Column4,
+          NULL AS Column5,
+          g1.DescuentoAplicado,
+          g1.Venta,
+          g1.Neto,
+          g1.IGV,
+          g1.Recargo,
+          d.tCortesia AS CodCortesia,
+          mc.tDetallado AS Cortesia,
+          est.tCodigo AS CodEstado,
+          est.tResumido AS Estado
+      FROM {DATABASE_INFOREST}..MPedido p
+      INNER JOIN (
+          SELECT 
+              p.tCodigoPedido AS Pedido,
+              dd.tDocumento AS Documento,
+              SUM(dd.nCantidad * dd.nPrecioOficial) AS Total,
+              SUM(dd.nCantidad * dd.nDescuento) AS DescuentoAplicado,
+              SUM(dd.nVenta) AS Venta,
+              SUM(dd.nCantidad * dd.nPrecioNeto) AS Neto,
+              SUM(dd.nImpuesto1) AS IGV,
+              SUM(dd.nImpuesto2) AS Recargo
+          FROM {DATABASE_INFOREST}..mPedido p 
+          INNER JOIN {DATABASE_INFOREST}..dDocumento dd ON dd.tCodigoPedido = p.tCodigoPedido
+          INNER JOIN {DATABASE_INFOREST}..mDocumento d ON d.tDocumento = dd.tDocumento  
+          WHERE p.tEstadoPedido = '02' AND d.tEstadoDocumento <> '04' 
+          AND CONVERT(DATE, p.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+          AND CONVERT(DATE, p.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+          GROUP BY p.tCodigoPedido, dd.tDocumento
+          UNION
+          SELECT 
+              p.tCodigoPedido AS Pedido,
+              'PEDI-' + p.tCodigoPedido AS Documento,
+              SUM(dp.nCantidad * dp.nPrecioOficial) AS Total,
+              SUM(dp.nCantidad * dp.nDescuento) AS DescuentoAplicado,
+              SUM(dp.nVenta) AS Venta,
+              SUM(dp.nCantidad * dp.nPrecioNeto) AS Neto,
+              SUM(dp.nImpuesto1) AS IGV,
+              SUM(dp.nImpuesto2) AS Recargo
+          FROM {DATABASE_INFOREST}..mPedido p
+          INNER JOIN {DATABASE_INFOREST}..dPedido dp ON dp.tCodigoPedido = p.tCodigoPedido
+          WHERE p.tEstadoPedido = '04' 
+          AND CONVERT(DATE, p.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+          AND CONVERT(DATE, p.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+          GROUP BY p.tCodigoPedido
+          UNION 
+          SELECT 
+              p.tCodigoPedido AS Pedido,
+              'PEDI-' + p.tCodigoPedido AS Documento,
+              0 AS Total,
+              0 AS DescuentoAplicado,
+              0 AS Venta,
+              0 AS Neto,
+              0 AS IGV,
+              0 AS Recargo
+          FROM {DATABASE_INFOREST}..mPedido p
+          WHERE p.tEstadoPedido = '03' 
+          AND CONVERT(DATE, p.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+          AND CONVERT(DATE, p.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+      ) g1 ON g1.Pedido = p.tCodigoPedido
+      INNER JOIN {DATABASE_INFOREST}..tCanalVenta cv ON p.tTipoPedido = cv.tCodigoCanalVenta
+      LEFT OUTER JOIN {DATABASE_INFOREST}..mDocumento d ON d.tDocumento = g1.Documento  
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tTipoDocumento td ON d.tTipoDocumento = td.tCodigoTipoDocumento
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tTabla m ON m.tTabla = 'MOZO' AND p.tMozo = m.tCodigo
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tMesa ms ON p.tMesa = ms.tCodigoMesa
+      LEFT OUTER JOIN {DATABASE_INFOREST}..vSalon s ON ms.tSalon = s.Codigo
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tCliente c1 ON d.tCodigoCliente = c1.tCodigoCliente
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tDelivery c2 ON p.tClienteCtaCte = c2.tCodigoDelivery
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tMotivoDescuento dsto ON p.tDescuento = dsto.tDescuento
+      LEFT OUTER JOIN {DATABASE_INFOREST}..tTabla mc ON d.tCortesia = mc.tCodigo AND mc.tTabla = 'CORTESIA'
+      INNER JOIN {DATABASE_INFOREST}..ttabla est ON est.ttabla = 'ESTADOPEDIDO' AND p.tEstadoPedido = est.tCodigo
+      WHERE p.tEstadoPedido IN ('02', '03', '04')
+    target_options:
+      init_sql: |
+        CREATE TABLE IF NOT EXISTS eternoretorno.Eterno_Retorno.liquidacionespedidos AS 
+        SELECT * FROM `Eterno_Retorno`.`liquidacionespedidos_tmp` LIMIT 0;
+      pre_sql: |
+        DELETE FROM eternoretorno.Eterno_Retorno.liquidacionespedidos WHERE CodSucursal = "{DATABASE_INFOREST}";
+
+  "liquidacionesproduccion":
+    mode: snapshot
+    object: "liquidacionesproduccion"
+    sql: |
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          CASE 
+              WHEN CONVERT(TIME, d.fRegistro) >= '00:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '04:59:59.0000000' THEN DATEADD(DAY, -1, CONVERT(DATE, d.fRegistro))
+              WHEN CONVERT(TIME, d.fRegistro) >= '05:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '23:59:59.0000000' THEN CONVERT(DATE, d.fRegistro)
+          END AS FechaOperacion,
+          CASE 
+              WHEN CONVERT(TIME, d.fRegistro) >= '05:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '18:00:00.0000000' THEN 'AM'
+              WHEN CONVERT(TIME, d.fRegistro) >= '18:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '23:59:59.0000000' THEN 'PM'
+              WHEN CONVERT(TIME, d.fRegistro) >= '00:00:00.0000000' AND CONVERT(TIME, d.fRegistro) < '05:00:00.0000000' THEN 'PM'
+          END AS Turno,
+          CONVERT(DATE, d.fRegistro) AS FechaEmision,
+          t1.tValor AS CodTipoIdentidad,
+          t1.tResumido AS TipoIdentidad,
+          d.tCodigoCliente AS IdCliente,
+          c.tIdentidad AS CodCliente,
+          c.tEmpresa AS Cliente,
+          cxp.tCodigoDelivery AS CXCCodigo,
+          cxp.tNombre + ' ' + cxp.tApellido AS CXCDescripcion,
+          td.Codigo AS CodTipoDocumento,
+          td.Sunat AS CodSUNAT,
+          td.Descripcion AS TipoDocumento,
+          d.tDocumento AS Documento,
+          d.nNeto AS Neto,
+          d.nPrecioImpuesto1 AS IGV,
+          d.nPrecioImpuesto2 AS Recargo,
+          d.nVenta AS Bruto,
+          NULL AS Referencia,
+          NULL AS FechaReferencia,
+          d.tUsuario AS Cajero,
+          t2.tCodigo AS CodEstado,
+          t2.tDetallado AS Estado 
+      FROM {DATABASE_INFOREST}..mDocumento d
+      LEFT JOIN {DATABASE_INFOREST}..tCliente c ON d.tCodigoCliente = c.tCodigoCliente
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t1 ON t1.tCodigo = c.tTipoIdentidad AND t1.tTabla = 'TipoIdentidad'
+      LEFT JOIN {DATABASE_INFOREST}..vTipoDocumento td ON d.tTipoDocumento = td.Codigo
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t2 ON d.tEstadoDocumento = t2.tCodigo AND t2.tTabla LIKE 'EstadoDocumento'
+      LEFT JOIN {DATABASE_INFOREST}..tDelivery cxp ON d.tClientePago = cxp.tCodigoDelivery
+      WHERE CONVERT(DATE, d.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+        AND CONVERT(DATE, d.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+
+      UNION ALL
+
+      SELECT 
+          '{DATABASE_INFOREST}' AS CodSucursal,
+          CASE 
+              WHEN CONVERT(TIME, nc.fFecha) >= '00:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '04:59:59.0000000' THEN DATEADD(DAY, -1, CONVERT(DATE, nc.fFecha))
+              WHEN CONVERT(TIME, nc.fFecha) >= '05:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '23:59:59.0000000' THEN CONVERT(DATE, nc.fFecha)
+          END AS FechaOperacion,
+          CASE 
+              WHEN CONVERT(TIME, nc.fFecha) >= '05:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '18:00:00.0000000' THEN 'AM'
+              WHEN CONVERT(TIME, nc.fFecha) >= '18:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '23:59:59.0000000' THEN 'PM'
+              WHEN CONVERT(TIME, nc.fFecha) >= '00:00:00.0000000' AND CONVERT(TIME, nc.fFecha) < '05:00:00.0000000' THEN 'PM'
+          END AS Turno,
+          CONVERT(DATE, nc.fRegistro) AS FechaEmision,
+          t1.tValor AS CodTipoIdentidad,
+          t1.tResumido AS TipoIdentidad,
+          d.tCodigoCliente AS IdCliente,
+          c.tIdentidad AS CodCliente,
+          c.tEmpresa AS Cliente,
+          '' AS CXCCodigo,
+          '' AS CXCDescripcion,
+          td.Codigo AS CodTipoDocumento,
+          td.Sunat AS CodSUNAT,
+          td.Descripcion AS TipoDocumento,
+          nc.tNotaCredito AS Documento,
+          nc.nNeto AS Neto,
+          nc.nImpuesto1 AS IGV,
+          nc.nImpuesto2 AS Recargo,
+          nc.nVenta AS Bruto,
+          nc.tDocumento AS Referencia,
+          CONVERT(DATE, d.fRegistro) AS FechaReferencia,
+          nc.tUsuario AS Cajero,
+          nc.tEstadoDocumento AS CodEstado,
+          t2.tResumido AS Estado
+      FROM {DATABASE_INFOREST}..mNotaCredito nc
+      INNER JOIN {DATABASE_INFOREST}..mDocumento d ON nc.tDocumento = d.tDocumento
+      LEFT JOIN {DATABASE_INFOREST}..tCliente c ON d.tCodigoCliente = c.tCodigoCliente
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t1 ON t1.tCodigo = c.tTipoIdentidad AND t1.tTabla = 'TipoIdentidad'
+      INNER JOIN {DATABASE_INFOREST}..vTipoDocumento td ON nc.tTipoDocumento = td.Codigo
+      LEFT JOIN {DATABASE_INFOREST}..tTabla t2 ON nc.tEstadoDocumento = t2.tCodigo AND t2.tTabla LIKE 'EstadoDocumento'
+      WHERE CONVERT(DATE, nc.fRegistro) >= CONVERT(DATE, '01/01/2023', 103) 
+        AND CONVERT(DATE, nc.fRegistro) <= CONVERT(DATE, GETDATE(), 103)
+    target_options:
+      init_sql: |
+        CREATE TABLE IF NOT EXISTS eternoretorno.Eterno_Retorno.liquidacionesproduccion AS 
+        SELECT * FROM `Eterno_Retorno`.`liquidacionesproduccion_tmp` LIMIT 0;
+      pre_sql: |
+        DELETE FROM eternoretorno.Eterno_Retorno.liquidacionesproduccion WHERE CodSucursal = "{DATABASE_INFOREST}";
+
+env:
+  DATABASE_INFOREST: '${MSSQL_DATABASE}'

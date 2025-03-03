@@ -1,0 +1,95 @@
+version: "3.7"
+
+services:
+  docker_user_code:
+    build:
+      context: .
+      dockerfile: ./Dockerfile_user_code
+    container_name: docker_user_code
+    image: docker_user_code_image
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DAGSTER_CURRENT_IMAGE: "docker_user_code_image"
+    volumes:
+      - /tmp/dagster-data:/opt/dagster/dagster_home/storage
+      - /opt/dagster/local:/opt/dagster/local
+    networks:
+      - docker_network
+  
+  dagster_webserver:
+    build:
+      context: .
+      dockerfile: ./Dockerfile_dagster
+    entrypoint:
+      - dagster-webserver
+      - -h
+      - "0.0.0.0"
+      - -p
+      - "3000"
+      - -w
+      - workspace.yaml
+    container_name: dagster_webserver
+    expose:
+      - "3000"
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - /tmp/dagster-data:/opt/dagster/dagster_home/storage
+      - /opt/dagster/local:/opt/dagster/local
+    networks:
+      - docker_network
+    depends_on:
+      - docker_user_code
+      - docker_psql
+
+  dagster_daemon:
+    build:
+      context: .
+      dockerfile: ./Dockerfile_dagster
+    entrypoint:
+      - dagster-daemon
+      - run
+    container_name: dagster_daemon
+    restart: on-failure
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - /tmp/dagster-data:/opt/dagster/dagster_home/storage
+      - /opt/dagster/local:/opt/dagster/local
+    networks:
+      - docker_network
+    depends_on:
+      - docker_user_code
+      - docker_psql
+
+  docker_psql:
+    image: postgres:11
+    container_name: docker_psql
+    environment:
+      POSTGRES_USER: "postgres_user"
+      POSTGRES_PASSWORD: "postgres_password"
+      POSTGRES_DB: "postgres_db"
+    networks:
+      - docker_network
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+
+volumes:
+  postgres_data:
+
+networks:
+  docker_network:
+    driver: bridge
+    name: docker_network

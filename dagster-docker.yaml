@@ -1,0 +1,94 @@
+
+local_artifact_storage:
+  module: dagster.core.storage.root
+  class: LocalArtifactStorage
+  config:
+    base_dir: "/opt/dagster/local/"
+
+scheduler:
+  module: dagster.core.scheduler
+  class: DagsterDaemonScheduler
+
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+
+run_launcher:
+  module: dagster_docker
+  class: DockerRunLauncher
+  config:
+    env_vars:
+      - GOOGLE_APPLICATION_CREDENTIALS
+      - DAGSTER_POSTGRES_USER
+      - DAGSTER_POSTGRES_PASSWORD
+      - DAGSTER_POSTGRES_DB
+      - DATABASE_INFOREST
+      - DATABASE_INFOREST2
+      - MSSQL_HOST
+      - MSSQL_HOST2
+      - MSSQL_USER
+      - MSSQL_USER2
+      - MSSQL_PASSWORD
+      - MSSQL_PASSWORD2
+      - MSSQL_DATABASE
+      - MSSQL_DATABASE2
+      
+    network: docker_network
+    container_kwargs:
+      volumes: # Make docker client accessible to any launched containers as well
+        - /var/run/docker.sock:/var/run/docker.sock
+        - /tmp/io_manager_storage:/tmp/io_manager_storage
+        - /tmp/dagster-data:/opt/dagster/dagster_home/storage
+
+# Configures how long Dagster keeps sensor / schedule tick data
+retention:
+  schedule:
+    purge_after_days: 30 # sets retention policy for schedule ticks of all types
+  sensor:
+    purge_after_days:
+      skipped: 7
+      failure: 20
+      success: -1 # keep success ticks indefinitely
+
+
+run_storage:
+  module: dagster_postgres.run_storage
+  class: PostgresRunStorage
+  config:
+    postgres_db:
+      hostname: docker_psql
+      username:
+        env: DAGSTER_POSTGRES_USER
+      password:
+        env: DAGSTER_POSTGRES_PASSWORD
+      db_name:
+        env: DAGSTER_POSTGRES_DB
+      port: 5432
+
+schedule_storage:
+  module: dagster_postgres.schedule_storage
+  class: PostgresScheduleStorage
+  config:
+    postgres_db:
+      hostname: docker_psql
+      username:
+        env: DAGSTER_POSTGRES_USER
+      password:
+        env: DAGSTER_POSTGRES_PASSWORD
+      db_name:
+        env: DAGSTER_POSTGRES_DB
+      port: 5432
+
+event_log_storage:
+  module: dagster_postgres.event_log
+  class: PostgresEventLogStorage
+  config:
+    postgres_db:
+      hostname: docker_psql
+      username:
+        env: DAGSTER_POSTGRES_USER
+      password:
+        env: DAGSTER_POSTGRES_PASSWORD
+      db_name:
+        env: DAGSTER_POSTGRES_DB
+      port: 5432

@@ -1,0 +1,11 @@
+dagster==1.9.3
+dagster-cloud==1.9.3
+pandas
+pyodbc
+dagster-gcp==0.25.3
+dagster-docker==0.25.3
+dagster-postgres==0.25.3
+dagster-embedded-elt==0.25.3
+sling==1.3.1
+dagster-webserver==1.9.3
+dagster-gcp-pandas==0.25.3

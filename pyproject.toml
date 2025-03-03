@@ -1,0 +1,27 @@
+[project]
+name = "eterno_retorno"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "dagster==1.9.3",
+    "dagster-cloud==1.9.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "dagster-webserver",
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.dagster]
+module_name = "eterno_retorno.definitions"
+project_name = "eterno_retorno"
+
+[tool.setuptools.packages.find]
+exclude=["eterno_retorno_tests"]

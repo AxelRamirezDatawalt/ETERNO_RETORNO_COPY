@@ -1,0 +1,57 @@
+FROM python:3.10-slim
+
+# Install necessary packages
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    unixodbc \
+    unixodbc-dev \
+    apt-transport-https
+
+# Add Microsoft GPG key
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+
+# Add Microsoft repository
+RUN curl https://packages.microsoft.com/config/debian/12/prod.list | tee /etc/apt/sources.list.d/mssql-release.list
+
+# Install ODBC Driver and tools
+RUN apt-get update && \
+    ACCEPT_EULA=Y apt-get install -y msodbcsql18 && \
+    ACCEPT_EULA=Y apt-get install -y mssql-tools18
+
+# Add SQL Server tools to PATH
+ENV PATH="$PATH:/opt/mssql-tools18/bin"
+
+# Install unixODBC development headers and Kerberos library
+RUN apt-get install -y unixodbc-dev libgssapi-krb5-2
+
+# Clean up
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+#copy requirements.txt and install dependencies
+COPY requirements.txt /opt/dagster/app/requirements.txt
+COPY setup.py /opt/dagster/app/setup.py
+
+# Add repository code
+WORKDIR /opt/dagster/app
+
+RUN pip install -r requirements.txt
+COPY eterno_retorno /opt/dagster/app/eterno_retorno
+RUN pip install -e .
+
+COPY key.json /opt/dagster/app/key.json
+ENV GOOGLE_APPLICATION_CREDENTIALS=/opt/dagster/app/key.json
+
+# Run dagster gRPC server on port 4000
+
+# Configure TLS settings for older SQL Server versions
+RUN sed -i 's/^MinProtocol\s*=.*$/MinProtocol = TLSv1/g' /etc/ssl/openssl.cnf && \
+    sed -i 's/^CipherString\s*=.*$/CipherString = DEFAULT@SECLEVEL=1/g' /etc/ssl/openssl.cnf
+
+
+EXPOSE 4000
+
+# CMD allows this to be overridden from run launchers or executors that want
+# to run other commands against your repository
+
+CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "eterno_retorno"]
