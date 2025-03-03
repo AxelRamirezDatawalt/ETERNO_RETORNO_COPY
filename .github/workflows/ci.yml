@@ -71,6 +71,12 @@ jobs:
       - name: Copy project files to temporary directory
         shell: powershell
         run: |
+          # GitHub Actions proporciona automáticamente la variable $env:GITHUB_WORKSPACE
+          # que apunta al directorio de trabajo correcto
+          Write-Host "Using workspace path: $env:GITHUB_WORKSPACE"
+          Write-Host "Listing workspace directory content:"
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE
+          
           Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination "${{ env.DAGSTER_TEMP }}" -Recurse -Force
 
       - name: Restore sensitive files to temporary directory
@@ -127,13 +133,13 @@ jobs:
           echo @echo off > dagster.bat
           echo set DAGSTER_HOME=C:\dagster_home>> dagster.bat
           echo cd C:\dagster_home >> dagster.bat
-          echo call .venv\Scripts\dagster-daemon run >> dagster.bat
+          echo call C:\dagster_home\.venv\Scripts\dagster-daemon run >> dagster.bat
           echo pause >> dagster.bat
           
           echo @echo off > dagster-webserver.bat
           echo set DAGSTER_HOME=C:\dagster_home>> dagster-webserver.bat
           echo cd C:\dagster_home >> dagster-webserver.bat
-          echo call .venv\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
+          echo call C:\dagster_home\.venv\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
           echo pause >> dagster-webserver.bat
 
       # Verificar si el directorio DAGSTER_HOME existe y si hay servicios ejecutándose
@@ -222,6 +228,13 @@ jobs:
           
           timeout /t 5
           
+          REM Verificar si los archivos existen
+          if not exist dagster.bat (
+            echo ERROR: dagster.bat not found!
+            dir
+            exit 1
+          )
+          
           REM Install Dagster Daemon Service
           nssm.exe install dagster_service "%DAGSTER_HOME%\dagster.bat"
           nssm.exe set dagster_service DisplayName "Dagster Service"
@@ -230,6 +243,13 @@ jobs:
           nssm.exe set dagster_service AppDirectory "%DAGSTER_HOME%"
           nssm.exe set dagster_service AppStdout "C:\dagster_home\dagster.log"
           nssm.exe set dagster_service AppStderr "C:\dagster_home\dagster.err"
+          
+          REM Verificar que el entorno virtual existe
+          if not exist %DAGSTER_HOME%\.venv\Scripts\dagster-daemon.exe (
+            echo ERROR: dagster-daemon.exe not found in the virtual environment!
+            dir %DAGSTER_HOME%\.venv\Scripts\
+            exit 1
+          )
           
           REM Install Dagster Webserver Service
           nssm.exe install dagit_service "%DAGSTER_HOME%\dagster-webserver.bat"
