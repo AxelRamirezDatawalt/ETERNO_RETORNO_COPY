@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        runner: [DEMON]
+        runner: [self-hosted-windows]
 
     env:
       DAGSTER_HOME: C:\dagster_home
