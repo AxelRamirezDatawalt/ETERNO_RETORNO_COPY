@@ -174,16 +174,18 @@ jobs:
         run: |
           cd ${{ env.DAGSTER_HOME }}
           
-          REM Verificar si existe nssm.exe
+          REM Crear un batch file para detener servicios
+          echo @echo off > stop_services.bat
+          echo echo Stopping dagit_service... >> stop_services.bat
+          echo nssm.exe stop dagit_service >> stop_services.bat
+          echo timeout /t 10 >> stop_services.bat
+          echo echo Stopping dagster_service... >> stop_services.bat
+          echo nssm.exe stop dagster_service >> stop_services.bat
+          echo timeout /t 10 >> stop_services.bat
+          
+          REM Ejecutar el batch
           if exist nssm.exe (
-              REM Detener servicios sin redirección de entrada
-              echo Stopping dagit_service...
-              nssm.exe stop dagit_service
-              timeout /t 10
-              
-              echo Stopping dagster_service...
-              nssm.exe stop dagster_service
-              timeout /t 10
+              call stop_services.bat
           ) else (
               echo NSSM not found in DAGSTER_HOME, services may not exist yet.
           )
