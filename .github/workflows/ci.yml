@@ -169,23 +169,24 @@ jobs:
 
       # Detener servicios existentes de forma ordenada
       - name: Stop existing services gracefully
-        shell: powershell
+        shell: cmd
         continue-on-error: true
         run: |
-          # Navegar al directorio DAGSTER_HOME
-          Set-Location $env:DAGSTER_HOME
+          cd %DAGSTER_HOME%
           
-          if (Test-Path "nssm.exe") {
-              Write-Host "Stopping dagit_service..."
-              cmd /c "nssm.exe stop dagit_service"
-              Start-Sleep -Seconds 10
+          REM Verificar si existe nssm.exe
+          if exist nssm.exe (
+              REM Detener servicios usando call para evitar problemas de redirección
+              echo Stopping dagit_service...
+              call nssm.exe stop dagit_service
+              timeout /t 10
               
-              Write-Host "Stopping dagster_service..."
-              cmd /c "nssm.exe stop dagster_service"
-              Start-Sleep -Seconds 10
-          } else {
-              Write-Host "NSSM not found in DAGSTER_HOME, services may not exist yet."
-          }
+              echo Stopping dagster_service...
+              call nssm.exe stop dagster_service
+              timeout /t 10
+          ) else (
+              echo NSSM not found in DAGSTER_HOME, services may not exist yet.
+          )
 
       # Copiar los archivos del directorio temporal al directorio final
       - name: Copy files from temporary directory to DAGSTER_HOME
