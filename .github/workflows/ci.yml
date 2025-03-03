@@ -1,0 +1,254 @@
+name: Setup Dagster Services
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  setup-dagster:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [DEMON]
+
+    env:
+      DAGSTER_HOME: C:\dagster_home
+      DAGSTER_TEMP: C:\dagster_temp
+
+    steps:
+      - name: Save sensitive files
+        shell: cmd
+        run: |
+          if exist .env (copy .env %RUNNER_TEMP%\.env)
+          if exist key.json (copy key.json %RUNNER_TEMP%\key.json)
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 2
+
+      - name: Set PowerShell execution policy
+        shell: cmd
+        run: powershell -Command "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser"
+
+      - name: Install Rust
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-toolchain stable --profile minimal
+          Remove-Item rustup-init.exe
+          $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          rustc --version
+          cargo --version
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # Preparar directorio temporal para evitar bloqueos
+      - name: Prepare temporary directory
+        shell: powershell
+        run: |
+          # Crear y limpiar directorio temporal
+          if (Test-Path ${{ env.DAGSTER_TEMP }}) {
+            Remove-Item -Path "${{ env.DAGSTER_TEMP }}" -Recurse -Force
+          }
+          New-Item -Path "${{ env.DAGSTER_TEMP }}" -ItemType Directory -Force | Out-Null
+          
+          # Crear subdirectorios necesarios
+          $dirs = @(
+            "${{ env.DAGSTER_TEMP }}\logs",
+            "${{ env.DAGSTER_TEMP }}\compute_logs"
+          )
+          foreach ($dir in $dirs) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
+
+      # Primero preparamos todo en el directorio temporal
+      - name: Copy project files to temporary directory
+        shell: powershell
+        run: |
+          Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination "${{ env.DAGSTER_TEMP }}" -Recurse -Force
+
+      - name: Restore sensitive files to temporary directory
+        shell: cmd
+        run: |
+          if exist %RUNNER_TEMP%\.env (copy %RUNNER_TEMP%\.env ${{ env.DAGSTER_TEMP }}\.env)
+          if exist %RUNNER_TEMP%\key.json (copy %RUNNER_TEMP%\key.json ${{ env.DAGSTER_TEMP }}\key.json)
+
+      # Preparar entorno virtual en el directorio temporal
+      - name: Setup Python virtual environment in temporary directory
+        shell: powershell
+        run: |
+          Set-Location "${{ env.DAGSTER_TEMP }}"
+          
+          # Crear entorno virtual
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          
+          # Instalar dependencias básicas
+          python -m pip install --upgrade pip setuptools wheel
+          
+          # Instalar dependencias del proyecto
+          Write-Host "Installing dependencies from requirements.txt..."
+          pip install --no-cache-dir -r requirements.txt
+          
+          Write-Host "Installing project in editable mode..."
+          pip install -e .
+
+      # Descargar NSSM en el directorio temporal
+      - name: Download and Install NSSM to temporary directory
+        shell: powershell
+        run: |
+          cd ${{ env.DAGSTER_TEMP }}
+          
+          Invoke-WebRequest -Uri 'https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile 'nssm.zip'
+          Expand-Archive -Path 'nssm.zip' -DestinationPath . -Force
+          
+          if (-not (Test-Path "nssm-2.24-101-g897c7ad\win64\nssm.exe")) {
+              Write-Host "NSSM download failed. Exiting."
+              exit 1
+          }
+          
+          Copy-Item "nssm-2.24-101-g897c7ad\win64\nssm.exe" . -Force
+          
+          Remove-Item 'nssm.zip' -Force
+          Remove-Item 'nssm-2.24-101-g897c7ad' -Recurse -Force
+
+      # Crear archivos batch en el directorio temporal
+      - name: Create service batch files in temporary directory
+        shell: cmd
+        run: |
+          cd ${{ env.DAGSTER_TEMP }}
+          
+          echo @echo off > dagster.bat
+          echo set DAGSTER_HOME=C:\dagster_home>> dagster.bat
+          echo cd C:\dagster_home >> dagster.bat
+          echo call .venv\Scripts\dagster-daemon run >> dagster.bat
+          echo pause >> dagster.bat
+          
+          echo @echo off > dagster-webserver.bat
+          echo set DAGSTER_HOME=C:\dagster_home>> dagster-webserver.bat
+          echo cd C:\dagster_home >> dagster-webserver.bat
+          echo call .venv\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
+          echo pause >> dagster-webserver.bat
+
+      # Verificar si el directorio DAGSTER_HOME existe y si hay servicios ejecutándose
+      - name: Check existing services
+        shell: powershell
+        run: |
+          # Verificar si el directorio DAGSTER_HOME existe
+          if (-not (Test-Path "${{ env.DAGSTER_HOME }}")) {
+              Write-Host "DAGSTER_HOME directory does not exist. Will create it."
+              New-Item -Path "${{ env.DAGSTER_HOME }}" -ItemType Directory -Force | Out-Null
+          } else {
+              Write-Host "DAGSTER_HOME directory exists. Will check for running services."
+          }
+          
+          # Verificar si los servicios existen
+          $dagsterService = Get-WmiObject -Class Win32_Service -Filter "Name='dagster_service'" -ErrorAction SilentlyContinue
+          $dagitService = Get-WmiObject -Class Win32_Service -Filter "Name='dagit_service'" -ErrorAction SilentlyContinue
+          
+          # Crear archivo de estado para pasos posteriores
+          $status = @{
+              DagsterServiceExists = $null -ne $dagsterService
+              DagitServiceExists = $null -ne $dagitService
+              DagsterServiceRunning = $null -ne $dagsterService -and $dagsterService.State -eq 'Running'
+              DagitServiceRunning = $null -ne $dagitService -and $dagitService.State -eq 'Running'
+          }
+          $status | ConvertTo-Json | Out-File -FilePath "${{ env.DAGSTER_TEMP }}\service_status.json"
+
+      # Detener servicios existentes de forma ordenada
+      - name: Stop existing services gracefully
+        shell: cmd
+        run: |
+          cd ${{ env.DAGSTER_TEMP }}
+          
+          REM Comprobar si existe nssm.exe en el directorio DAGSTER_HOME
+          if exist ${{ env.DAGSTER_HOME }}\nssm.exe (
+              REM Detener primero el servicio web (depende del daemon)
+              ${{ env.DAGSTER_HOME }}\nssm.exe stop dagit_service 2>nul
+              timeout /t 10
+              
+              REM Ahora detener el servicio daemon
+              ${{ env.DAGSTER_HOME }}\nssm.exe stop dagster_service 2>nul
+              timeout /t 10
+          ) else (
+              echo NSSM not found in DAGSTER_HOME, services may not exist yet.
+          )
+
+      # Copiar los archivos del directorio temporal al directorio final
+      - name: Copy files from temporary directory to DAGSTER_HOME
+        shell: powershell
+        run: |
+          # Crear directorio DAGSTER_HOME si no existe
+          if (-not (Test-Path "${{ env.DAGSTER_HOME }}")) {
+              New-Item -Path "${{ env.DAGSTER_HOME }}" -ItemType Directory -Force | Out-Null
+          }
+          
+          # Crear subdirectorios necesarios
+          $dirs = @(
+            "${{ env.DAGSTER_HOME }}\logs",
+            "${{ env.DAGSTER_HOME }}\compute_logs"
+          )
+          foreach ($dir in $dirs) { 
+              if (-not (Test-Path $dir)) {
+                  New-Item -Path $dir -ItemType Directory -Force | Out-Null
+              }
+          }
+          
+          # Copiar archivos del directorio temporal, excluyendo .venv para preservar el entorno existente si es posible
+          Copy-Item -Path "${{ env.DAGSTER_TEMP }}\*" -Destination "${{ env.DAGSTER_HOME }}" -Recurse -Force -Exclude ".venv"
+          
+          # Si no existe un entorno virtual en DAGSTER_HOME, copiarlo completo
+          if (-not (Test-Path "${{ env.DAGSTER_HOME }}\.venv")) {
+              Write-Host "Virtual environment does not exist in DAGSTER_HOME. Copying it."
+              Copy-Item -Path "${{ env.DAGSTER_TEMP }}\.venv" -Destination "${{ env.DAGSTER_HOME }}" -Recurse -Force
+          }
+
+      # Instalar servicios con NSSM
+      - name: Install and start services with NSSM
+        shell: cmd
+        continue-on-error: true
+        run: |
+          cd ${{ env.DAGSTER_HOME }}
+          
+          REM Eliminar servicios existentes
+          nssm.exe remove dagster_service confirm 2>nul
+          nssm.exe remove dagit_service confirm 2>nul
+          
+          timeout /t 5
+          
+          REM Install Dagster Daemon Service
+          nssm.exe install dagster_service "%DAGSTER_HOME%\dagster.bat"
+          nssm.exe set dagster_service DisplayName "Dagster Service"
+          nssm.exe set dagster_service Description "Runs Dagster daemon process"
+          nssm.exe set dagster_service Start SERVICE_AUTO_START
+          nssm.exe set dagster_service AppDirectory "%DAGSTER_HOME%"
+          nssm.exe set dagster_service AppStdout "C:\dagster_home\dagster.log"
+          nssm.exe set dagster_service AppStderr "C:\dagster_home\dagster.err"
+          
+          REM Install Dagster Webserver Service
+          nssm.exe install dagit_service "%DAGSTER_HOME%\dagster-webserver.bat"
+          nssm.exe set dagit_service DisplayName "Dagster Webserver Service"
+          nssm.exe set dagit_service Description "Runs Dagster webserver process"
+          nssm.exe set dagit_service Start SERVICE_AUTO_START
+          nssm.exe set dagit_service AppDirectory "%DAGSTER_HOME%"
+          nssm.exe set dagit_service AppStdout "C:\dagster_home\dagster-webserver.log"
+          nssm.exe set dagit_service AppStderr "C:\dagster_home\dagster-webserver.err"
+          
+          REM Iniciar servicios en orden: primero el daemon, luego el webserver
+          nssm.exe start dagster_service
+          timeout /t 10
+          nssm.exe start dagit_service
+
+      # Limpiar directorio temporal
+      - name: Clean up temporary directory
+        shell: powershell
+        run: |
+          if (Test-Path "${{ env.DAGSTER_TEMP }}") {
+              Remove-Item -Path "${{ env.DAGSTER_TEMP }}" -Recurse -Force -ErrorAction SilentlyContinue
+          }
