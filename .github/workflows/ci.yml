@@ -111,10 +111,25 @@ jobs:
           Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination $env:DAGSTER_HOME -Recurse -Force
 
       - name: Restore sensitive files
-        shell: cmd
+        shell: powershell
         run: |
-          if exist %RUNNER_TEMP%\env (copy %RUNNER_TEMP%\env %DAGSTER_HOME%\env)
-          if exist %RUNNER_TEMP%\key.json (copy %RUNNER_TEMP%\key.json %DAGSTER_HOME%\key.json)
+          Write-Host "Verificando archivos en $env:RUNNER_TEMP..."
+          Get-ChildItem -Path $env:RUNNER_TEMP
+      
+          if (Test-Path "$env:RUNNER_TEMP\env") {
+              Write-Host "✅ Archivo env encontrado, copiando a $env:DAGSTER_HOME\env"
+              Copy-Item -Path "$env:RUNNER_TEMP\env" -Destination "$env:DAGSTER_HOME\env" -Force
+          } else {
+              Write-Host "⚠️ Advertencia: No se encontró env en $env:RUNNER_TEMP, omitiendo copia"
+          }
+      
+          if (Test-Path "$env:RUNNER_TEMP\key.json") {
+              Write-Host "✅ Archivo key.json encontrado, copiando a $env:DAGSTER_HOME\key.json"
+              Copy-Item -Path "$env:RUNNER_TEMP\key.json" -Destination "$env:DAGSTER_HOME\key.json" -Force
+          } else {
+              Write-Host "⚠️ Advertencia: No se encontró key.json en $env:RUNNER_TEMP, omitiendo copia"
+          }
+        
 
       - name: Setup Python virtual environment in DAGSTER_HOME
         shell: powershell
