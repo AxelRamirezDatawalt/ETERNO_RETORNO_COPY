@@ -119,7 +119,7 @@ jobs:
 
       - name: Setup Python virtual environment in DAGSTER_HOME
         shell: powershell
-        run: |ss
+        run: |
           # Permitir ejecución de scripts en PowerShell
           Set-ExecutionPolicy RemoteSigned -Scope Process -Force
             
