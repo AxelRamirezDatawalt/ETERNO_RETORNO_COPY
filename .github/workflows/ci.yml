@@ -115,70 +115,67 @@ jobs:
         run: |
           if exist %RUNNER_TEMP%\env (copy %RUNNER_TEMP%\env %DAGSTER_HOME%\env)
           if exist %RUNNER_TEMP%\key.json (copy %RUNNER_TEMP%\key.json %DAGSTER_HOME%\key.json)
-  
 
       - name: Setup Python virtual environment in DAGSTER_HOME
         shell: powershell
         run: |
-          # Permitir ejecución de scripts en PowerShell
+          # Permitir ejecución de scripts
           Set-ExecutionPolicy RemoteSigned -Scope Process -Force
-            
-          # Verificar que DAGSTER_HOME está definido y existe
-          if (-Not $env:DAGSTER_HOME) {
-              Write-Host "Error: DAGSTER_HOME is not set!"
-              exit 1
-          }
-          if (-Not (Test-Path -Path $env:DAGSTER_HOME)) {
-              Write-Host "Error: DAGSTER_HOME directory does not exist!"
-              exit 1
-          }
       
-          # Definir variables
+          # Definir rutas
           $PYTHON_PATH = "$env:pythonLocation\python.exe"
           $VENV_PATH = "$env:DAGSTER_HOME\env"
       
-          # Ir a la carpeta de DAGSTER_HOME
-          Set-Location $env:DAGSTER_HOME
+          Write-Host "📌 Python ejecutable en: $PYTHON_PATH"
+          Write-Host "📌 Ruta del entorno virtual: $VENV_PATH"
       
-          # Crear un nuevo entorno virtual si no existe
-          if (-Not (Test-Path -Path $VENV_PATH)) {
-              Write-Host "Creating virtual environment..."
-              & $PYTHON_PATH -m venv env
+          # Verificar si la carpeta del entorno existe
+          if (Test-Path -Path $VENV_PATH) {
+              Write-Host "⚠️ Se encontró un entorno virtual existente en $VENV_PATH, eliminando..."
+              Remove-Item -Path $VENV_PATH -Recurse -Force
           } else {
-              Write-Host "Virtual environment already exists, skipping creation."
+              Write-Host "✅ No hay entorno virtual previo, creando uno nuevo..."
+          }
+      
+          # Crear el entorno virtual
+          & $PYTHON_PATH -m venv $VENV_PATH
+      
+          # Verificar si la creación fue exitosa
+          if (Test-Path -Path "$VENV_PATH\Scripts\python.exe") {
+              Write-Host "✅ Entorno virtual creado en $VENV_PATH"
+          } else {
+              Write-Host "❌ Error: No se pudo crear el entorno virtual."
+              exit 1
           }
       
           # Activar el entorno virtual
-          Write-Host "Activating virtual environment..."
           $env:VIRTUAL_ENV = "$VENV_PATH"
           $env:PATH = "$VENV_PATH\Scripts;$env:PATH"
       
-          # Instalar herramientas básicas
-          Write-Host "Installing/updating pip, setuptools, and wheel..."
+          Write-Host "📌 PATH actualizado: $env:PATH"
+      
+          # Verificar la activación del entorno virtual
+          Write-Host "📌 Python dentro del entorno virtual:"
+          & "$VENV_PATH\Scripts\python.exe" --version
+      
+          # Actualizar herramientas básicas
+          Write-Host "📌 Actualizando pip, setuptools y wheel..."
           python -m pip install --upgrade pip setuptools wheel
-            
-          # Instalar dependencias del proyecto si el archivo requirements.txt existe
+      
+          # Instalar dependencias
           $REQ_FILE = "$env:DAGSTER_HOME\requirements.txt"
           if (Test-Path -Path $REQ_FILE) {
-              Write-Host "Installing dependencies from requirements.txt..."
+              Write-Host "📌 Instalando dependencias desde: $REQ_FILE"
               pip install --no-cache-dir -r $REQ_FILE
           } else {
-              Write-Host "Warning: requirements.txt not found, skipping dependency installation."
+              Write-Host "⚠️ No se encontró requirements.txt, instalando Dagster manualmente."
+              pip install dagster dagit dagster-postgres
           }
-            
-          # Instalar el proyecto en modo editable si setup.py o pyproject.toml existen
-          if ((Test-Path "$env:DAGSTER_HOME\setup.py") -or (Test-Path "$env:DAGSTER_HOME\pyproject.toml")) {
-              Write-Host "Installing project in editable mode..."
-              pip install -e .
-          } else {
-              Write-Host "Warning: No setup.py or pyproject.toml found, skipping project installation."
-          }
-            
-          # Verificar instalación de Dagster
-          Write-Host "Verifying Dagster installation..."
-          pip list | Select-String -Pattern "dagster"
+      
+          # Verificar instalación
+          Write-Host "📌 Lista de paquetes instalados:"
+          pip list
         
-  
       - name: Download and Install NSSM
         shell: powershell
         run: |
