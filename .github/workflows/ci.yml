@@ -175,8 +175,7 @@ jobs:
           ping -n 2 127.0.0.1 > nul
           nssm.exe remove dagit_service confirm 2>nul && echo "Removed dagit_service" || echo "Failed to remove dagit_service"
           ping -n 6 127.0.0.1 > nul  # Última espera de 5s
-          
-          timeout /t 5 /nobreak 
+
 
 
           echo "=== Installing Dagster Daemon Service ==="
