@@ -168,10 +168,13 @@ jobs:
 
           echo "=== Stopping and Removing Existing Services ==="
           nssm.exe stop dagster_service 2>nul && echo "Stopped dagster_service" || echo "Failed to stop dagster_service"
+          timeout /t 1
           nssm.exe remove dagster_service confirm 2>nul && echo "Removed dagster_service" || echo "Failed to remove dagster_service"
+          timeout /t 1
           nssm.exe stop dagit_service 2>nul && echo "Stopped dagit_service" || echo "Failed to stop dagit_service"
+          timeout /t 1
           nssm.exe remove dagit_service confirm 2>nul && echo "Removed dagit_service" || echo "Failed to remove dagit_service"
-
+          
           timeout /t 5
 
           echo "=== Installing Dagster Daemon Service ==="
