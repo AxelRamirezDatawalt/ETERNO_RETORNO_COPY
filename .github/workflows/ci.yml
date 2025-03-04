@@ -204,13 +204,13 @@ jobs:
           echo @echo off > dagster.bat
           echo set DAGSTER_HOME=%DAGSTER_HOME% >> dagster.bat
           echo cd %DAGSTER_HOME% >> dagster.bat
-          echo call %DAGSTER_HOME%\.venv\Scripts\dagster-daemon run >> dagster.bat
+          echo call %DAGSTER_HOME%\env\Scripts\dagster-daemon run >> dagster.bat
           echo pause >> dagster.bat
           
           echo @echo off > dagster-webserver.bat
           echo set DAGSTER_HOME=%DAGSTER_HOME% >> dagster-webserver.bat
           echo cd %DAGSTER_HOME% >> dagster-webserver.bat
-          echo call %DAGSTER_HOME%\.venv\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
+          echo call %DAGSTER_HOME%\env\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
           echo pause >> dagster-webserver.bat
 
       - name: Install and start services with NSSM
@@ -233,9 +233,9 @@ jobs:
             exit 1
           )
           
-          if not exist .venv\Scripts\dagster-daemon.exe (
+          if not exist env\Scripts\dagster-daemon.exe (
             echo ERROR: dagster-daemon.exe not found in the virtual environment!
-            dir .venv\Scripts\
+            dir env\Scripts\
             exit 1
           )
           
