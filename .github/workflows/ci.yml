@@ -177,7 +177,6 @@ jobs:
         shell: cmd
         run: |
           cd %DAGSTER_HOME%
-          #ocmentiro
           echo @echo off > dagster.bat
           echo set DAGSTER_HOME=%DAGSTER_HOME% >> dagster.bat
           echo cd %DAGSTER_HOME% >> dagster.bat
