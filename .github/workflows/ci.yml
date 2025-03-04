@@ -20,7 +20,7 @@ jobs:
       - name: Save sensitive files
         shell: cmd
         run: |
-          if exist env (copy env %RUNNER_TEMP%\env)
+          if exist .env (copy .env %RUNNER_TEMP%\.env)
           if exist key.json (copy key.json %RUNNER_TEMP%\key.json)
 
       - name: Checkout code
@@ -49,230 +49,149 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      # Detener servicios existentes si existen
-      - name: Stop existing services gracefully
-        shell: powershell
-        continue-on-error: true
-        run: |
-          if (Test-Path "$env:DAGSTER_HOME\nssm.exe") {
-              Write-Host "Stopping dagit_service..."
-              & "$env:DAGSTER_HOME\nssm.exe" stop dagit_service | Out-Null
-              Start-Sleep -Seconds 10
-              
-              Write-Host "Stopping dagster_service..."
-              & "$env:DAGSTER_HOME\nssm.exe" stop dagster_service | Out-Null
-              Start-Sleep -Seconds 10
-          } else {
-              Write-Host "NSSM not found in DAGSTER_HOME, services may not exist yet."
-          }
-
-
-      # Preparar directorio DAGSTER_HOME
       - name: Prepare DAGSTER_HOME directory
         shell: powershell
         run: |
-          # Si el directorio existe, preservar solo archivos sensibles
-          if (Test-Path $env:DAGSTER_HOME) {
-              # Guardar temporalmente archivos sensibles si existen
-              $sensitivePaths = @("env", "key.json", "dagster.log", "dagster.err", "dagster-webserver.log", "dagster-webserver.err")
-              foreach ($path in $sensitivePaths) {
-                  $fullPath = Join-Path $env:DAGSTER_HOME $path
-                  if (Test-Path $fullPath) {
-                      Copy-Item -Path $fullPath -Destination $env:RUNNER_TEMP -Force
-                  }
-              }
-              
-              # Borrar directorio
-              Remove-Item -Path $env:DAGSTER_HOME -Recurse -Force
-          }
-          
-          # Crear directorio limpio y subdirectorios
-          New-Item -Path $env:DAGSTER_HOME -ItemType Directory -Force | Out-Null
           $dirs = @(
-            "$env:DAGSTER_HOME\logs",
-            "$env:DAGSTER_HOME\compute_logs"
+            "${{ env.DAGSTER_HOME }}",
+            "${{ env.DAGSTER_HOME }}\logs",
+            "${{ env.DAGSTER_HOME }}\compute_logs"
           )
-          foreach ($dir in $dirs) {
-              New-Item -Path $dir -ItemType Directory -Force | Out-Null
-          }
-          
-          # Restaurar archivos sensibles
-          foreach ($path in $sensitivePaths) {
-              $tempPath = Join-Path $env:RUNNER_TEMP $path
-              $dagsterPath = Join-Path $env:DAGSTER_HOME $path
-              if (Test-Path $tempPath) {
-                  Copy-Item -Path $tempPath -Destination $dagsterPath -Force
-              }
-          }
+          foreach ($dir in $dirs) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
 
       - name: Copy project files to DAGSTER_HOME
         shell: powershell
         run: |
-          Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination $env:DAGSTER_HOME -Recurse -Force
+          Copy-Item -Path "$env:GITHUB_WORKSPACE\*" -Destination "${{ env.DAGSTER_HOME }}" -Recurse -Force
 
       - name: Restore sensitive files
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Verificando archivos en $env:RUNNER_TEMP..."
-          Get-ChildItem -Path $env:RUNNER_TEMP
-      
-          if (Test-Path "$env:RUNNER_TEMP\env") {
-              Write-Host "✅ Archivo env encontrado, copiando a $env:DAGSTER_HOME\env"
-              Copy-Item -Path "$env:RUNNER_TEMP\env" -Destination "$env:DAGSTER_HOME\env" -Force
-          } else {
-              Write-Host "⚠️ Advertencia: No se encontró env en $env:RUNNER_TEMP, omitiendo copia"
-          }
-      
-          if (Test-Path "$env:RUNNER_TEMP\key.json") {
-              Write-Host "✅ Archivo key.json encontrado, copiando a $env:DAGSTER_HOME\key.json"
-              Copy-Item -Path "$env:RUNNER_TEMP\key.json" -Destination "$env:DAGSTER_HOME\key.json" -Force
-          } else {
-              Write-Host "⚠️ Advertencia: No se encontró key.json en $env:RUNNER_TEMP, omitiendo copia"
-          }
-        
+          if exist %RUNNER_TEMP%\.env (copy %RUNNER_TEMP%\.env .env)
+          if exist %RUNNER_TEMP%\key.json (copy %RUNNER_TEMP%\key.json key.json)
 
-      - name: Setup Python virtual environment in DAGSTER_HOME
+      - name: Setup Python virtual environment
         shell: powershell
         run: |
-          # Permitir ejecución de scripts
-          Set-ExecutionPolicy RemoteSigned -Scope Process -Force
-      
-          # Definir rutas
-          $PYTHON_PATH = "$env:pythonLocation\python.exe"
-          $VENV_PATH = "$env:DAGSTER_HOME\env"
-      
-          Write-Host "📌 Python ejecutable en: $PYTHON_PATH"
-          Write-Host "📌 Ruta del entorno virtual: $VENV_PATH"
-      
-          # Verificar si la carpeta del entorno existe
-          if (Test-Path -Path $VENV_PATH) {
-              Write-Host "⚠️ Se encontró un entorno virtual existente en $VENV_PATH, eliminando..."
-              Remove-Item -Path $VENV_PATH -Recurse -Force
-          } else {
-              Write-Host "✅ No hay entorno virtual previo, creando uno nuevo..."
-          }
-      
-          # Crear el entorno virtual
-          & $PYTHON_PATH -m venv $VENV_PATH
-      
-          # Verificar si la creación fue exitosa
-          if (Test-Path -Path "$VENV_PATH\Scripts\python.exe") {
-              Write-Host "✅ Entorno virtual creado en $VENV_PATH"
-          } else {
-              Write-Host "❌ Error: No se pudo crear el entorno virtual."
-              exit 1
-          }
-      
-          # Activar el entorno virtual
-          $env:VIRTUAL_ENV = "$VENV_PATH"
-          $env:PATH = "$VENV_PATH\Scripts;$env:PATH"
-      
-          Write-Host "📌 PATH actualizado: $env:PATH"
-      
-          # Verificar la activación del entorno virtual
-          Write-Host "📌 Python dentro del entorno virtual:"
-          & "$VENV_PATH\Scripts\python.exe" --version
-      
-          # Actualizar herramientas básicas
-          Write-Host "📌 Actualizando pip, setuptools y wheel..."
-          python -m pip install --upgrade pip setuptools wheel
-      
-          # Instalar dependencias
-          $REQ_FILE = "$env:DAGSTER_HOME\requirements.txt"
-          if (Test-Path -Path $REQ_FILE) {
-              Write-Host "📌 Instalando dependencias desde: $REQ_FILE"
-              pip install --no-cache-dir -r $REQ_FILE
-          } else {
-              Write-Host "⚠️ No se encontró requirements.txt, instalando Dagster manualmente."
-              pip install dagster dagit dagster-postgres
-          }
-      
-          # Verificar instalación
-          Write-Host "📌 Lista de paquetes instalados:"
-          pip list
-        
-      - name: Download and Install NSSM
-        shell: powershell
-        run: |
-          cd $env:DAGSTER_HOME
+          Set-Location "C:\dagster_home"
 
-          Invoke-WebRequest -Uri 'https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile 'nssm.zip'
-          Expand-Archive -Path 'nssm.zip' -DestinationPath . -Force
-          
-          if (-not (Test-Path "nssm-2.24-101-g897c7ad\win64\nssm.exe")) {
-              Write-Host "NSSM download failed. Exiting."
-              exit 1
+          if (-not (Test-Path ".venv")) {
+              Write-Host "Creating virtual environment..."
+              python -m venv .venv
+          } else {
+              Write-Host "Virtual environment already exists. Skipping creation."
           }
-          
-          Copy-Item "nssm-2.24-101-g897c7ad\win64\nssm.exe" . -Force
-          
-          Remove-Item 'nssm.zip' -Force
-          Remove-Item 'nssm-2.24-101-g897c7ad' -Recurse -Force
+
+          .\.venv\Scripts\Activate.ps1
+
+          # Variable para marcar si necesitamos instalar algo
+          $install_needed = $false
+
+          # Verificar si setuptools está instalado
+          $setuptools_installed = pip list --format=freeze | Select-String "^setuptools="
+          if (-not $setuptools_installed) {
+              Write-Host "Setuptools not found. Marking for installation."
+              $install_needed = $true
+          } else {
+              Write-Host "Setuptools is already installed."
+          }
+
+          # Verificar si wheel está instalado
+          $wheel_installed = pip list --format=freeze | Select-String "^wheel="
+          if (-not $wheel_installed) {
+              Write-Host "Wheel not found. Marking for installation."
+              $install_needed = $true
+          } else {
+              Write-Host "Wheel is already installed."
+          }
+
+          # Instalar pip, setuptools, y wheel si es necesario
+          if ($install_needed) {
+              Write-Host "Installing/updating pip, setuptools, and wheel..."
+              python -m pip install --upgrade pip setuptools wheel
+          }
+
+          Write-Host "Installing dependencies from requirements.txt..."
+          pip install --no-cache-dir -r requirements.txt
+
+          Write-Host "Installing project in editable mode..."
+          pip install -e .
+
+      - name: Download and Install NSSM (No cache)
+        shell: powershell
+        run: |
+          $nssmProcess = Get-Process | Where-Object { $_.ProcessName -eq "nssm" }
+
+          if ($nssmProcess) {
+              Write-Host "NSSM is running. Skipping installation."
+          } else {
+              Write-Host "NSSM is not running. Installing..."
+              cd $env:DAGSTER_HOME
+
+              Invoke-WebRequest -Uri 'https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip' -OutFile 'nssm.zip'
+              Expand-Archive -Path 'nssm.zip' -DestinationPath . -Force
+
+              if (-not (Test-Path "nssm-2.24-101-g897c7ad\win64\nssm.exe")) {
+                  Write-Host "NSSM download failed. Exiting."
+                  exit 1
+              }
+
+              Copy-Item "nssm-2.24-101-g897c7ad\win64\nssm.exe" . -Force
+
+              Remove-Item 'nssm.zip' -Force
+              Remove-Item 'nssm-2.24-101-g897c7ad' -Recurse -Force
+
+              Write-Host "NSSM successfully installed."
+          }
 
       - name: Create service batch files
         shell: cmd
         run: |
-          cd %DAGSTER_HOME%
+          cd C:\dagster_home
           echo @echo off > dagster.bat
-          echo set DAGSTER_HOME=%DAGSTER_HOME% >> dagster.bat
-          echo cd %DAGSTER_HOME% >> dagster.bat
-          echo call %DAGSTER_HOME%\env\Scripts\dagster-daemon run >> dagster.bat
+          echo set DAGSTER_HOME=C:\dagster_home>> dagster.bat
+          echo cd C:\dagster_home >> dagster.bat
+          echo call .venv\Scripts\dagster-daemon run >> dagster.bat
           echo pause >> dagster.bat
-          
+
           echo @echo off > dagster-webserver.bat
-          echo set DAGSTER_HOME=%DAGSTER_HOME% >> dagster-webserver.bat
-          echo cd %DAGSTER_HOME% >> dagster-webserver.bat
-          echo call %DAGSTER_HOME%\env\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
+          echo set DAGSTER_HOME=C:\dagster_home>> dagster-webserver.bat
+          echo cd C:\dagster_home >> dagster-webserver.bat
+          echo call .venv\Scripts\dagster-webserver -h 0.0.0.0 -p 3000 >> dagster-webserver.bat
           echo pause >> dagster-webserver.bat
 
-      - name: Install and start services with NSSM
+      - name: Install services with NSSM
         shell: cmd
         continue-on-error: true
         run: |
-          cd %DAGSTER_HOME%
-          
-          REM Eliminar servicios existentes
-          echo Removing existing services...
-          call nssm.exe remove dagster_service confirm
-          call nssm.exe remove dagit_service confirm
-          
+          cd ${{ env.DAGSTER_HOME }}
+
+          REM Stop and remove existing services
+          nssm.exe stop dagster_service 2>nul
+          nssm.exe remove dagster_service confirm 2>nul
+          nssm.exe stop dagit_service 2>nul
+          nssm.exe remove dagit_service confirm 2>nul
+
           timeout /t 5
-          
-          REM Verificar que los archivos y ejecutables existen
-          if not exist dagster.bat (
-            echo ERROR: dagster.bat not found!
-            dir
-            exit 1
-          )
-          
-          if not exist env\Scripts\dagster-daemon.exe (
-            echo ERROR: dagster-daemon.exe not found in the virtual environment!
-            dir env\Scripts\
-            exit 1
-          )
-          
+
           REM Install Dagster Daemon Service
-          echo Installing Dagster daemon service...
-          call nssm.exe install dagster_service "%DAGSTER_HOME%\dagster.bat"
-          call nssm.exe set dagster_service DisplayName "Dagster Service"
-          call nssm.exe set dagster_service Description "Runs Dagster daemon process"
-          call nssm.exe set dagster_service Start SERVICE_AUTO_START
-          call nssm.exe set dagster_service AppDirectory "%DAGSTER_HOME%"
-          call nssm.exe set dagster_service AppStdout "%DAGSTER_HOME%\dagster.log"
-          call nssm.exe set dagster_service AppStderr "%DAGSTER_HOME%\dagster.err"
-          
+          nssm.exe install dagster_service "%DAGSTER_HOME%\dagster.bat"
+          nssm.exe set dagster_service DisplayName "Dagster Service"
+          nssm.exe set dagster_service Description "Runs Dagster daemon process"
+          nssm.exe set dagster_service Start SERVICE_AUTO_START
+          nssm.exe set dagster_service AppDirectory "%DAGSTER_HOME%"
+          nssm.exe set dagster_service AppStdout "C:\dagster_home\dagster.log"
+          nssm.exe set dagster_service AppStderr "C:\dagster_home\dagster.err"
+
           REM Install Dagster Webserver Service
-          echo Installing Dagster webserver service...
-          call nssm.exe install dagit_service "%DAGSTER_HOME%\dagster-webserver.bat"
-          call nssm.exe set dagit_service DisplayName "Dagster Webserver Service"
-          call nssm.exe set dagit_service Description "Runs Dagster webserver process"
-          call nssm.exe set dagit_service Start SERVICE_AUTO_START
-          call nssm.exe set dagit_service AppDirectory "%DAGSTER_HOME%"
-          call nssm.exe set dagit_service AppStdout "%DAGSTER_HOME%\dagster-webserver.log"
-          call nssm.exe set dagit_service AppStderr "%DAGSTER_HOME%\dagster-webserver.err"
-          
-          REM Iniciar servicios en orden: primero el daemon, luego el webserver
-          echo Starting services...
-          call nssm.exe start dagster_service
-          timeout /t 10
-          call nssm.exe start dagit_service
+          nssm.exe install dagit_service "%DAGSTER_HOME%\dagster-webserver.bat"
+          nssm.exe set dagit_service DisplayName "Dagster Webserver Service"
+          nssm.exe set dagit_service Description "Runs Dagster webserver process"
+          nssm.exe set dagit_service Start SERVICE_AUTO_START
+          nssm.exe set dagit_service AppDirectory "%DAGSTER_HOME%"
+          nssm.exe set dagit_service AppStdout "C:\dagster_home\dagster-webserver.log"
+          nssm.exe set dagit_service AppStderr "C:\dagster_home\dagster-webserver.err"
+
+          REM Start services
+          nssm.exe start dagster_service
+          nssm.exe start dagit_service
