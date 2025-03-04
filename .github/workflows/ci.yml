@@ -51,20 +51,21 @@ jobs:
 
       # Detener servicios existentes si existen
       - name: Stop existing services gracefully
-        shell: cmd
+        shell: powershell
         continue-on-error: true
         run: |
-          if exist %DAGSTER_HOME%\nssm.exe (
-              echo Stopping dagit_service...
-              call %DAGSTER_HOME%\nssm.exe stop dagit_service
-              timeout /t 10
+          if (Test-Path "$env:DAGSTER_HOME\nssm.exe") {
+              Write-Host "Stopping dagit_service..."
+              & "$env:DAGSTER_HOME\nssm.exe" stop dagit_service | Out-Null
+              Start-Sleep -Seconds 10
               
-              echo Stopping dagster_service...
-              call %DAGSTER_HOME%\nssm.exe stop dagster_service
-              timeout /t 10
-          ) else (
-              echo NSSM not found in DAGSTER_HOME, services may not exist yet.
-          )
+              Write-Host "Stopping dagster_service..."
+              & "$env:DAGSTER_HOME\nssm.exe" stop dagster_service | Out-Null
+              Start-Sleep -Seconds 10
+          } else {
+              Write-Host "NSSM not found in DAGSTER_HOME, services may not exist yet."
+          }
+
 
       # Preparar directorio DAGSTER_HOME
       - name: Prepare DAGSTER_HOME directory
@@ -114,6 +115,7 @@ jobs:
         run: |
           if exist %RUNNER_TEMP%\env (copy %RUNNER_TEMP%\env %DAGSTER_HOME%\env)
           if exist %RUNNER_TEMP%\key.json (copy %RUNNER_TEMP%\key.json %DAGSTER_HOME%\key.json)
+  
 
       - name: Setup Python virtual environment in DAGSTER_HOME
         shell: powershell
