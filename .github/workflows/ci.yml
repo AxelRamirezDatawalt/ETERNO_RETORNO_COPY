@@ -1,5 +1,5 @@
 name: Setup Dagster Services
-#probardneuvo
+
 on:
   push:
     branches: ["main"]
@@ -166,7 +166,6 @@ jobs:
         run: |
           cd ${{ env.DAGSTER_HOME }}
 
-          echo "=== Stopping and Removing Existing Services ==="
           nssm.exe stop dagster_service 2>nul && echo "Stopped dagster_service" || echo "Failed to stop dagster_service"
           ping -n 2 127.0.0.1 > nul
           nssm.exe remove dagster_service confirm 2>nul && echo "Removed dagster_service" || echo "Failed to remove dagster_service"
@@ -174,12 +173,11 @@ jobs:
           nssm.exe stop dagit_service 2>nul && echo "Stopped dagit_service" || echo "Failed to stop dagit_service"
           ping -n 2 127.0.0.1 > nul
           nssm.exe remove dagit_service confirm 2>nul && echo "Removed dagit_service" || echo "Failed to remove dagit_service"
-          ping -n 6 127.0.0.1 > nul  # Última espera de 5s
+          ping -n 6 127.0.0.1 > nul  
 
 
-
-          echo "=== Installing Dagster Daemon Service ==="
-          nssm.exe install dagster_service "%DAGSTER_HOME%\dagster.bat" && echo "Installed dagster_service" || echo "Failed to install dagster_service"
+          REM Install Dagster Daemon Service
+          nssm.exe install dagster_service "%DAGSTER_HOME%\dagster.bat"
           nssm.exe set dagster_service DisplayName "Dagster Service"
           nssm.exe set dagster_service Description "Runs Dagster daemon process"
           nssm.exe set dagster_service Start SERVICE_AUTO_START
@@ -187,8 +185,8 @@ jobs:
           nssm.exe set dagster_service AppStdout "C:\dagster_home\dagster.log"
           nssm.exe set dagster_service AppStderr "C:\dagster_home\dagster.err"
 
-          echo "=== Installing Dagster Webserver Service ==="
-          nssm.exe install dagit_service "%DAGSTER_HOME%\dagster-webserver.bat" && echo "Installed dagit_service" || echo "Failed to install dagit_service"
+          REM Install Dagster Webserver Service
+          nssm.exe install dagit_service "%DAGSTER_HOME%\dagster-webserver.bat"
           nssm.exe set dagit_service DisplayName "Dagster Webserver Service"
           nssm.exe set dagit_service Description "Runs Dagster webserver process"
           nssm.exe set dagit_service Start SERVICE_AUTO_START
@@ -196,6 +194,6 @@ jobs:
           nssm.exe set dagit_service AppStdout "C:\dagster_home\dagster-webserver.log"
           nssm.exe set dagit_service AppStderr "C:\dagster_home\dagster-webserver.err"
 
-          echo "=== Starting Services ==="
-          nssm.exe start dagster_service && echo "Started dagster_service" || echo "Failed to start dagster_service"
-          nssm.exe start dagit_service && echo "Started dagit_service" || echo "Failed to start dagit_service"
+          REM Start services
+          nssm.exe start dagster_service
+          nssm.exe start dagit_service
